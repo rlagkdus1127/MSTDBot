@@ -2,6 +2,7 @@ import os
 import time
 from mastodon import Mastodon, StreamListener
 import re
+import random
 from gacha_system import GachaSystem
 
 class MastodonBotListener(StreamListener):
@@ -77,6 +78,16 @@ class MastodonBot:
             if not keywords_text:
                 return
             
+            # 소지품 키워드 확인
+            if '소지품' in keywords_text.lower() or '인벤토리' in keywords_text.lower():
+                self.handle_inventory(user, status_id)
+                return
+            
+            # 1d100 주사위 키워드 확인
+            if '1d100' in keywords_text.lower():
+                self.handle_dice(user, status_id)
+                return
+            
             # 가챠 키워드 확인
             if '가챠' in keywords_text.lower():
                 self.handle_gacha(user, status_id)
@@ -122,6 +133,91 @@ class MastodonBot:
         
         return None
     
+    def handle_inventory(self, username, status_id):
+        """소지품 조회 처리"""
+        try:
+            # 유저명을 알파벳 단일 문자로 변환 (임시)
+            # 실제로는 마스토돈 유저명과 시트명 매핑이 필요
+            sheet_username = username[0].upper() if username else 'A'
+            
+            # 유효한 유저 확인 (A~T)
+            valid_users = [chr(ord('A') + i) for i in range(20)]
+            if sheet_username not in valid_users:
+                sheet_username = 'A'  # 기본값
+            
+            # 소지품 조회
+            inventory = self.google_sheets.get_user_inventory(sheet_username)
+            
+            if not inventory:
+                response = f"소지품이 비어있습니다."
+            else:
+                response = f"소지품 목록 ({len(inventory)}개):\n"
+                for i, item_data in enumerate(inventory[:10]):  # 최대 10개까지 표시
+                    item = item_data['item']
+                    quantity = item_data['quantity']
+                    if quantity > 1:
+                        response += f"• {item} x{quantity}\n"
+                    else:
+                        response += f"• {item}\n"
+                
+                if len(inventory) > 10:
+                    response += f"... 외 {len(inventory) - 10}개"
+            
+            # 응답 전송
+            reply = f"@{username} {response}"
+            self.mastodon.status_post(
+                reply, 
+                in_reply_to_id=status_id,
+                visibility='public'
+            )
+            
+            print(f"소지품 조회 - {username} ({sheet_username}): {len(inventory)}개 아이템")
+            
+        except Exception as e:
+            print(f"소지품 조회 중 오류 발생: {e}")
+            # 오류 발생 시 사용자에게 알림
+            reply = f"@{username} 소지품 조회 중 오류가 발생했습니다. 다시 시도해주세요."
+            try:
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+            except:
+                pass
+    
+    def handle_dice(self, username, status_id):
+        """1d100 주사위 처리"""
+        try:
+            # 1~100 사이의 랜덤 숫자 생성
+            result = random.randint(1, 100)
+            
+            # 응답 메시지 생성
+            response = f"{result}이 나왔습니다!"
+            
+            # 응답 전송
+            reply = f"@{username} {response}"
+            self.mastodon.status_post(
+                reply, 
+                in_reply_to_id=status_id,
+                visibility='public'
+            )
+            
+            print(f"주사위 결과 - {username}: {result}")
+            
+        except Exception as e:
+            print(f"주사위 처리 중 오류 발생: {e}")
+            # 오류 발생 시 사용자에게 알림
+            reply = f"@{username} 주사위 처리 중 오류가 발생했습니다. 다시 시도해주세요."
+            try:
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+            except:
+                pass
+
     def handle_gacha(self, username, status_id):
         """가챠 처리"""
         try:
@@ -175,11 +271,19 @@ class MastodonBot:
             if item.endswith('!'):
                 item = item[:-1].strip()
             
+            # acquisition_log 시트에 기록
             self.google_sheets.log_acquisition(
                 self.acquisition_sheet, 
                 username, 
                 item
             )
+            
+            # 유저 소지품 시트에도 직접 추가
+            sheet_username = username[0].upper() if username else 'A'
+            valid_users = [chr(ord('A') + i) for i in range(20)]
+            if sheet_username in valid_users:
+                self.google_sheets.add_item_to_user_inventory(sheet_username, item)
+            
         except Exception as e:
             print(f"획득 로그 기록 중 오류: {e}")
     

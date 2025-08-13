@@ -65,7 +65,7 @@ mkdir mastodon-bot
 cd mastodon-bot
 
 # 방법 1: Git에서 클론 (추천)
-git clone [YOUR_REPOSITORY_URL] .
+git clone [git@github.com:rlagkdus1127/MSTDBot.git] .
 
 # 방법 2: 로컬에서 파일 직접 복사
 # 로컬 터미널에서 실행:
@@ -110,7 +110,7 @@ GACHA_SHEET_NAME=가챠
 **로컬 터미널에서 실행:**
 ```bash
 # 서비스 계정 JSON 키 파일 업로드
-gcloud compute scp service_account.json mastodon-bot:~/mastodon-bot/ --zone=us-central1-a
+gcloud compute scp starlit-primacy-468708-n7-ee6c8110e463.json mastodon-bot:~/mastodon-bot/ --zone=us-central1-a
 ```
 
 **서버에서 실행:**
