@@ -1,0 +1,40 @@
+{
+  "memory_threshold": 80,
+  "cpu_threshold": 90,
+  "disk_threshold": 85,
+  "log_check_minutes": 30,
+  "check_interval": 300,
+  "alert_webhook": null,
+  "notifications": {
+    "email": {
+      "enabled": false,
+      "smtp_server": "smtp.gmail.com",
+      "smtp_port": 587,
+      "from_email": "",
+      "to_emails": [],
+      "password": ""
+    },
+    "discord": {
+      "enabled": false,
+      "webhook_url": ""
+    },
+    "slack": {
+      "enabled": false,
+      "webhook_url": ""
+    }
+  },
+  "thresholds": {
+    "consecutive_failures": 3,
+    "memory_critical": 95,
+    "cpu_critical": 95,
+    "disk_critical": 90,
+    "error_rate_warning": 5,
+    "error_rate_critical": 10
+  },
+  "monitoring": {
+    "enable_performance_tracking": true,
+    "enable_api_monitoring": true,
+    "enable_log_analysis": true,
+    "retention_days": 30
+  }
+}
