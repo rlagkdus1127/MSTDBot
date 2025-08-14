@@ -9,17 +9,29 @@ from scheduler import BotScheduler
 class MastodonBotListener(StreamListener):
     def __init__(self, bot_instance):
         self.bot = bot_instance
+        # 처리된 상태 ID를 저장하는 세트 (중복 방지)
+        self.processed_status_ids = set()
         
     def on_notification(self, notification):
         """알림 수신 시 호출"""
         if notification['type'] == 'mention':
-            self.bot.handle_mention(notification['status'])
+            status_id = notification['status']['id']
+            # 이미 처리된 상태인지 확인
+            if status_id not in self.processed_status_ids:
+                self.processed_status_ids.add(status_id)
+                self.bot.handle_mention(notification['status'])
+                
+                # 메모리 관리: 1000개 이상이면 오래된 것 제거
+                if len(self.processed_status_ids) > 1000:
+                    # 세트를 리스트로 변환하여 최근 500개만 유지
+                    self.processed_status_ids = set(list(self.processed_status_ids)[-500:])
     
-    def on_update(self, status):
-        """새로운 상태 업데이트 수신 시 호출 (타임라인)"""
-        # 멘션된 경우만 처리
-        if self.bot.is_mentioned(status):
-            self.bot.handle_mention(status)
+    # on_update 메서드 제거 - 중복 처리 방지
+    # def on_update(self, status):
+    #     """새로운 상태 업데이트 수신 시 호출 (타임라인)"""
+    #     # 멘션된 경우만 처리
+    #     if self.bot.is_mentioned(status):
+    #         self.bot.handle_mention(status)
 
 class MastodonBot:
     def __init__(self, access_token, api_base_url, google_sheets_manager, 
@@ -75,7 +87,7 @@ class MastodonBot:
             import html
             clean_content = html.unescape(re.sub(r'<[^>]+>', '', content))
             
-            print(f"멘션 수신 - @{user}: {clean_content}")
+            print(f"멘션 수신 - @{user}: {clean_content} (ID: {status_id})")
             
             # 키워드 추출
             keywords_text = self.extract_keywords(clean_content)
