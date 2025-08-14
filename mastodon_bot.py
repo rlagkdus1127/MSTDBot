@@ -4,6 +4,7 @@ from mastodon import Mastodon, StreamListener
 import re
 import random
 from gacha_system import GachaSystem
+from scheduler import BotScheduler
 
 class MastodonBotListener(StreamListener):
     def __init__(self, bot_instance):
@@ -22,16 +23,20 @@ class MastodonBotListener(StreamListener):
 
 class MastodonBot:
     def __init__(self, access_token, api_base_url, google_sheets_manager, 
-                 keywords_sheet, acquisition_sheet, gacha_sheet=None):
+                 keywords_sheet, acquisition_sheet, gacha_sheet=None, store_sheet=None):
         self.access_token = access_token
         self.api_base_url = api_base_url
         self.google_sheets = google_sheets_manager
         self.keywords_sheet = keywords_sheet
         self.acquisition_sheet = acquisition_sheet
         self.gacha_sheet = gacha_sheet or "가챠"
+        self.store_sheet = store_sheet or "상점"
         
         # 가챠 시스템 초기화
         self.gacha_system = GachaSystem()
+        
+        # 스케줄러 초기화
+        self.scheduler = BotScheduler(self)
         
         # 마스토돈 API 클라이언트 초기화
         self.mastodon = Mastodon(
@@ -93,6 +98,21 @@ class MastodonBot:
                 self.handle_gacha(user, status_id)
                 return
             
+            # 상점 키워드 확인
+            if '상점' in keywords_text.lower():
+                self.handle_store(user, status_id)
+                return
+            
+            # 구매 키워드 확인
+            if keywords_text.lower().startswith('구매'):
+                self.handle_purchase(user, status_id, keywords_text)
+                return
+            
+            # 출석 키워드 확인
+            if '출석' in keywords_text.lower():
+                self.handle_attendance(user, status_id)
+                return
+            
             # 구글 시트에서 키워드 데이터 가져오기
             keywords_data = self.google_sheets.get_keywords_data(self.keywords_sheet)
             
@@ -147,12 +167,16 @@ class MastodonBot:
             
             # 소지품 조회
             inventory = self.google_sheets.get_user_inventory(sheet_username)
+            user_currency = self.google_sheets.get_user_currency(sheet_username)
             
             if not inventory:
-                response = f"소지품이 비어있습니다."
+                response = f"소지품이 비어있습니다.\n💰 갈레온: {user_currency}"
             else:
-                response = f"소지품 목록 ({len(inventory)}개):\n"
-                for i, item_data in enumerate(inventory[:10]):  # 최대 10개까지 표시
+                # 갈레온을 제외한 아이템들만 표시
+                items_without_currency = [item for item in inventory if item['item'] != '갈레온']
+                
+                response = f"🎒 소지품 목록 ({len(items_without_currency)}개):\n"
+                for i, item_data in enumerate(items_without_currency[:10]):  # 최대 10개까지 표시
                     item = item_data['item']
                     quantity = item_data['quantity']
                     if quantity > 1:
@@ -160,8 +184,10 @@ class MastodonBot:
                     else:
                         response += f"• {item}\n"
                 
-                if len(inventory) > 10:
-                    response += f"... 외 {len(inventory) - 10}개"
+                if len(items_without_currency) > 10:
+                    response += f"... 외 {len(items_without_currency) - 10}개\n"
+                
+                response += f"\n💰 갈레온: {user_currency}"
             
             # 응답 전송
             reply = f"@{username} {response}"
@@ -221,6 +247,23 @@ class MastodonBot:
     def handle_gacha(self, username, status_id):
         """가챠 처리"""
         try:
+            # 유저명을 알파벳 단일 문자로 변환
+            sheet_username = username[0].upper() if username else 'A'
+            valid_users = [chr(ord('A') + i) for i in range(20)]
+            if sheet_username not in valid_users:
+                sheet_username = 'A'
+            
+            # 갈레온 체크 (가챠 비용: 3갈레온)
+            current_currency = self.google_sheets.get_user_currency(sheet_username)
+            if current_currency < 3:
+                reply = f"@{username} 갈레온이 부족합니다! 가챠 이용료는 3갈레온입니다. (보유: {current_currency} 갈레온)"
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
             # 가챠 아이템 데이터 가져오기
             gacha_items = self.google_sheets.get_gacha_items(self.gacha_sheet)
             
@@ -233,9 +276,23 @@ class MastodonBot:
                 )
                 return
             
+            # 갈레온 차감
+            if not self.google_sheets.update_user_currency(sheet_username, 3, 'subtract'):
+                reply = f"@{username} 갈레온 차감 중 오류가 발생했습니다. 다시 시도해주세요."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
             # 가챠 실행
             selected_item, rarity = self.gacha_system.get_random_item(gacha_items)
             response = self.gacha_system.format_gacha_result(selected_item, rarity)
+            
+            # 잔액 정보 추가
+            new_balance = current_currency - 3
+            response += f" (잔액: {new_balance} 갈레온)"
             
             # 응답 전송
             reply = f"@{username} {response}"
@@ -245,7 +302,7 @@ class MastodonBot:
                 visibility='public'
             )
             
-            print(f"가챠 결과 - {username}: {selected_item} ({rarity})")
+            print(f"가챠 결과 - {username}: {selected_item} ({rarity}) - 갈레온 3개 차감")
             
             # 획득 로그 기록 (모든 가챠 결과는 '획득' 포함)
             self.log_acquisition(username, f"{selected_item} ({rarity})")
@@ -254,6 +311,182 @@ class MastodonBot:
             print(f"가챠 처리 중 오류 발생: {e}")
             # 오류 발생 시 사용자에게 알림
             reply = f"@{username} 가챠 처리 중 오류가 발생했습니다. 다시 시도해주세요."
+            try:
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+            except:
+                pass
+
+    def handle_store(self, username, status_id):
+        """상점 조회 처리"""
+        try:
+            # 상점 아이템 조회
+            store_items = self.google_sheets.get_store_items(self.store_sheet)
+            
+            if not store_items:
+                response = "상점에 판매 중인 아이템이 없습니다."
+            else:
+                response = "🏪 상점 아이템 목록:\n\n"
+                for item in store_items[:10]:  # 최대 10개까지 표시
+                    name = item['name']
+                    price = item['price']
+                    description = item['description']
+                    
+                    if description:
+                        response += f"• {name} - {price} 갈레온\n  {description}\n\n"
+                    else:
+                        response += f"• {name} - {price} 갈레온\n"
+                
+                if len(store_items) > 10:
+                    response += f"... 외 {len(store_items) - 10}개"
+                
+                # 사용자 갈레온 표시
+                sheet_username = username[0].upper() if username else 'A'
+                valid_users = [chr(ord('A') + i) for i in range(20)]
+                if sheet_username in valid_users:
+                    user_currency = self.google_sheets.get_user_currency(sheet_username)
+                    response += f"\n💰 보유 갈레온: {user_currency}"
+                
+                response += "\n\n구매하려면 '구매 [아이템명]'을 입력하세요."
+            
+            # 응답 전송
+            reply = f"@{username} {response}"
+            self.mastodon.status_post(
+                reply, 
+                in_reply_to_id=status_id,
+                visibility='public'
+            )
+            
+            print(f"상점 조회 - {username}: {len(store_items)}개 아이템")
+            
+        except Exception as e:
+            print(f"상점 조회 중 오류 발생: {e}")
+            reply = f"@{username} 상점 조회 중 오류가 발생했습니다. 다시 시도해주세요."
+            try:
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+            except:
+                pass
+
+    def handle_purchase(self, username, status_id, keywords_text):
+        """아이템 구매 처리"""
+        try:
+            # '구매' 키워드 제거하고 아이템명 추출
+            item_name = keywords_text[2:].strip()  # '구매' 두 글자 제거
+            
+            if not item_name:
+                reply = f"@{username} 구매할 아이템명을 입력해주세요. (예: 구매 검)"
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 유저명을 알파벳 단일 문자로 변환
+            sheet_username = username[0].upper() if username else 'A'
+            valid_users = [chr(ord('A') + i) for i in range(20)]
+            if sheet_username not in valid_users:
+                sheet_username = 'A'
+            
+            # 상점에서 아이템 찾기
+            store_items = self.google_sheets.get_store_items(self.store_sheet)
+            target_item = None
+            
+            for item in store_items:
+                if item['name'].lower() == item_name.lower():
+                    target_item = item
+                    break
+            
+            if not target_item:
+                reply = f"@{username} '{item_name}' 아이템을 상점에서 찾을 수 없습니다."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 구매 처리
+            success, message = self.google_sheets.purchase_item(
+                sheet_username, 
+                target_item['name'], 
+                target_item['price']
+            )
+            
+            if success:
+                # 구매 성공시 획득 로그에도 기록
+                self.log_acquisition(username, f"{target_item['name']} 구매")
+            
+            # 응답 전송
+            reply = f"@{username} {message}"
+            self.mastodon.status_post(
+                reply, 
+                in_reply_to_id=status_id,
+                visibility='public'
+            )
+            
+            print(f"구매 시도 - {username} ({sheet_username}): {item_name} - {'성공' if success else '실패'}")
+            
+        except Exception as e:
+            print(f"구매 처리 중 오류 발생: {e}")
+            reply = f"@{username} 구매 처리 중 오류가 발생했습니다. 다시 시도해주세요."
+            try:
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+            except:
+                pass
+
+    def handle_attendance(self, username, status_id):
+        """출석 체크 처리"""
+        try:
+            # 출석 체크 활성화 상태 확인
+            if not self.scheduler.is_attendance_active():
+                reply = f"@{username} 현재 출석 체크 시간이 아닙니다. 출석 체크는 매일 오전 7시부터 자정까지입니다."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 유저명을 알파벳 단일 문자로 변환
+            sheet_username = username[0].upper() if username else 'A'
+            valid_users = [chr(ord('A') + i) for i in range(20)]
+            if sheet_username not in valid_users:
+                sheet_username = 'A'
+            
+            # 갈레온 6개 지급
+            if self.google_sheets.update_user_currency(sheet_username, 6, 'add'):
+                current_currency = self.google_sheets.get_user_currency(sheet_username)
+                reply = f"@{username} 출석 체크 완료! 갈레온 6개를 지급했습니다. (보유: {current_currency} 갈레온)"
+                
+                # 출석 로그 기록
+                self.log_acquisition(username, "출석 체크 (갈레온 6개)")
+                
+                print(f"출석 체크 - {username} ({sheet_username}): 갈레온 6개 지급")
+            else:
+                reply = f"@{username} 출석 체크 처리 중 오류가 발생했습니다. 다시 시도해주세요."
+            
+            # 응답 전송
+            self.mastodon.status_post(
+                reply, 
+                in_reply_to_id=status_id,
+                visibility='public'
+            )
+            
+        except Exception as e:
+            print(f"출석 체크 처리 중 오류 발생: {e}")
+            reply = f"@{username} 출석 체크 처리 중 오류가 발생했습니다. 다시 시도해주세요."
             try:
                 self.mastodon.status_post(
                     reply, 
@@ -291,6 +524,10 @@ class MastodonBot:
         """스트리밍 시작"""
         try:
             print("마스토돈 스트리밍 시작...")
+            
+            # 스케줄러 시작
+            self.scheduler.start()
+            
             listener = MastodonBotListener(self)
             
             # 사용자 스트림 시작 (멘션 및 알림 수신)
@@ -300,6 +537,10 @@ class MastodonBot:
             print(f"스트리밍 중 오류 발생: {e}")
             time.sleep(5)
             self.start_streaming()  # 재시작
+        finally:
+            # 스케줄러 중지
+            if hasattr(self, 'scheduler'):
+                self.scheduler.stop()
     
     def post_status(self, message, visibility='public'):
         """상태 게시"""

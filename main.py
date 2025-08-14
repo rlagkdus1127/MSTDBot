@@ -103,6 +103,7 @@ def main():
         keywords_sheet = os.getenv('KEYWORDS_SHEET_NAME')
         acquisition_sheet = os.getenv('ACQUISITION_LOG_SHEET_NAME')
         gacha_sheet = os.getenv('GACHA_SHEET_NAME', '가챠')
+        store_sheet = os.getenv('STORE_SHEET_NAME', '상점')
         
         logger.info("환경 변수 확인 완료")
         
@@ -122,7 +123,8 @@ def main():
             google_sheets,
             keywords_sheet,
             acquisition_sheet,
-            gacha_sheet
+            gacha_sheet,
+            store_sheet
         )
         
         # 초기 키워드 데이터 로드 테스트
@@ -145,12 +147,23 @@ def main():
             for i in range(min(5, len(gacha_items))):
                 logger.info(f"가챠 아이템 {i+1}: {gacha_items[i]}")
         
+        # 상점 아이템 데이터 로드 테스트
+        logger.info("상점 아이템 로드 테스트...")
+        store_items = google_sheets.get_store_items(store_sheet)
+        logger.info(f"로드된 상점 아이템 수: {len(store_items)}")
+        
+        if store_items:
+            for i in range(min(5, len(store_items))):
+                item = store_items[i]
+                logger.info(f"상점 아이템 {i+1}: {item['name']} - {item['price']} 갈레온")
+        
         # 봇 시작 메시지
         logger.info("=== 마스토돈 봇 시작 ===")
         logger.info(f"마스토돈 인스턴스: {mastodon_url}")
         logger.info(f"스프레드시트 ID: {spreadsheet_id}")
         logger.info(f"키워드 시트: {keywords_sheet}")
         logger.info(f"가챠 시트: {gacha_sheet}")
+        logger.info(f"상점 시트: {store_sheet}")
         logger.info(f"획득 로그 시트: {acquisition_sheet}")
         logger.info("봇이 실행 중입니다. 종료하려면 SIGTERM/SIGINT 시그널을 보내주세요.")
         

@@ -296,3 +296,145 @@ class GoogleSheetsManager:
         except Exception as e:
             print(f"획득 로그 동기화 중 오류 발생: {e}")
             return False
+    
+    def get_store_items(self, sheet_name="상점"):
+        """상점 시트에서 아이템과 가격 정보를 가져옴"""
+        try:
+            sheet = self.service.spreadsheets()
+            result = sheet.values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f'{sheet_name}!A:C'
+            ).execute()
+            
+            values = result.get('values', [])
+            if not values:
+                return []
+            
+            store_items = []
+            for row in values[1:]:  # 헤더 제외
+                if len(row) >= 2:  # 최소한 아이템명과 가격 필요
+                    item_name = row[0].strip()
+                    try:
+                        price = int(row[1])
+                    except (ValueError, IndexError):
+                        continue  # 가격이 숫자가 아니면 스킵
+                    
+                    description = row[2].strip() if len(row) > 2 else ""
+                    store_items.append({
+                        'name': item_name,
+                        'price': price,
+                        'description': description
+                    })
+            
+            return store_items
+            
+        except Exception as e:
+            print(f"상점 데이터를 가져오는 중 오류 발생: {e}")
+            return []
+    
+    def get_user_currency(self, username):
+        """유저의 갈레온 보유량 조회"""
+        try:
+            inventory = self.get_user_inventory(username)
+            
+            for item_data in inventory:
+                if item_data['item'] == '갈레온':
+                    return item_data['quantity']
+            
+            return 0  # 갈레온이 없으면 0
+            
+        except Exception as e:
+            print(f"{username} 갈레온 조회 중 오류 발생: {e}")
+            return 0
+    
+    def update_user_currency(self, username, amount, operation='set'):
+        """유저의 갈레온 업데이트 (set: 설정, add: 추가, subtract: 차감)"""
+        try:
+            # 시트가 없으면 생성
+            self.create_user_inventory_sheet(username)
+            
+            sheet = self.service.spreadsheets()
+            
+            # 기존 갈레온 찾기
+            result = sheet.values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f'{username}!A:C'
+            ).execute()
+            
+            values = result.get('values', [])
+            galleon_row = None
+            current_amount = 0
+            
+            # 갈레온 행 찾기
+            for i, row in enumerate(values[1:], start=2):  # 헤더 제외
+                if len(row) > 0 and row[0] == '갈레온':
+                    galleon_row = i
+                    current_amount = int(row[2]) if len(row) > 2 and row[2].isdigit() else 0
+                    break
+            
+            # 새로운 금액 계산
+            if operation == 'set':
+                new_amount = amount
+            elif operation == 'add':
+                new_amount = current_amount + amount
+            elif operation == 'subtract':
+                new_amount = max(0, current_amount - amount)  # 음수 방지
+            else:
+                return False
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            if galleon_row:
+                # 기존 갈레온 업데이트
+                update_values = [['갈레온', timestamp, new_amount]]
+                body = {'values': update_values}
+                
+                sheet.values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f'{username}!A{galleon_row}:C{galleon_row}',
+                    valueInputOption='RAW',
+                    body=body
+                ).execute()
+            else:
+                # 새 갈레온 행 추가
+                new_values = [['갈레온', timestamp, new_amount]]
+                body = {'values': new_values}
+                
+                sheet.values().append(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f'{username}!A:C',
+                    valueInputOption='RAW',
+                    body=body
+                ).execute()
+            
+            print(f"{username} 갈레온 업데이트: {current_amount} -> {new_amount}")
+            return True
+            
+        except Exception as e:
+            print(f"{username} 갈레온 업데이트 중 오류 발생: {e}")
+            return False
+    
+    def purchase_item(self, username, item_name, price):
+        """아이템 구매 처리 (갈레온 차감 및 아이템 추가)"""
+        try:
+            current_currency = self.get_user_currency(username)
+            
+            if current_currency < price:
+                return False, f"갈레온이 부족합니다. (보유: {current_currency}, 필요: {price})"
+            
+            # 갈레온 차감
+            if not self.update_user_currency(username, price, 'subtract'):
+                return False, "갈레온 차감 중 오류가 발생했습니다."
+            
+            # 아이템 추가
+            if not self.add_item_to_user_inventory(username, item_name):
+                # 갈레온 차감을 롤백
+                self.update_user_currency(username, price, 'add')
+                return False, "아이템 추가 중 오류가 발생했습니다."
+            
+            new_currency = current_currency - price
+            return True, f"{item_name}을(를) 구매했습니다! (잔액: {new_currency} 갈레온)"
+            
+        except Exception as e:
+            print(f"{username} 아이템 구매 중 오류 발생: {e}")
+            return False, "구매 처리 중 오류가 발생했습니다."
