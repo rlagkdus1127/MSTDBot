@@ -173,14 +173,8 @@ class MastodonBot:
     def handle_inventory(self, username, status_id):
         """소지품 조회 처리"""
         try:
-            # 유저명을 알파벳 단일 문자로 변환 (임시)
-            # 실제로는 마스토돈 유저명과 시트명 매핑이 필요
-            sheet_username = username[0].upper() if username else 'A'
-            
-            # 유효한 유저 확인 (A~T)
-            valid_users = [chr(ord('A') + i) for i in range(20)]
-            if sheet_username not in valid_users:
-                sheet_username = 'A'  # 기본값
+            # 유저명을 그대로 사용
+            sheet_username = username if username else 'Unknown'
             
             # 소지품 조회
             inventory = self.google_sheets.get_user_inventory(sheet_username)
@@ -264,11 +258,8 @@ class MastodonBot:
     def handle_gacha(self, username, status_id):
         """가챠 처리"""
         try:
-            # 유저명을 알파벳 단일 문자로 변환
-            sheet_username = username[0].upper() if username else 'A'
-            valid_users = [chr(ord('A') + i) for i in range(20)]
-            if sheet_username not in valid_users:
-                sheet_username = 'A'
+            # 유저명을 그대로 사용
+            sheet_username = username if username else 'Unknown'
             
             # 갈레온 체크 (가챠 비용: 3갈레온)
             current_currency = self.google_sheets.get_user_currency(sheet_username)
@@ -361,9 +352,8 @@ class MastodonBot:
                     response += f"... 외 {len(store_items) - 10}개"
                 
                 # 사용자 갈레온 표시
-                sheet_username = username[0].upper() if username else 'A'
-                valid_users = [chr(ord('A') + i) for i in range(20)]
-                if sheet_username in valid_users:
+                sheet_username = username if username else 'Unknown'
+                if sheet_username:
                     user_currency = self.google_sheets.get_user_currency(sheet_username)
                     response += f"\n💰 보유 갈레온: {user_currency}"
                 
@@ -406,11 +396,8 @@ class MastodonBot:
                 )
                 return
             
-            # 유저명을 알파벳 단일 문자로 변환
-            sheet_username = username[0].upper() if username else 'A'
-            valid_users = [chr(ord('A') + i) for i in range(20)]
-            if sheet_username not in valid_users:
-                sheet_username = 'A'
+            # 유저명을 그대로 사용
+            sheet_username = username if username else 'Unknown'
             
             # 상점에서 아이템 찾기
             store_items = self.google_sheets.get_store_items(self.store_sheet)
@@ -476,11 +463,8 @@ class MastodonBot:
                 )
                 return
             
-            # 유저명을 알파벳 단일 문자로 변환
-            sheet_username = username[0].upper() if username else 'A'
-            valid_users = [chr(ord('A') + i) for i in range(20)]
-            if sheet_username not in valid_users:
-                sheet_username = 'A'
+            # 유저명을 그대로 사용
+            sheet_username = username if username else 'Unknown'
             
             # 갈레온 6개 지급
             if self.google_sheets.update_user_currency(sheet_username, 6, 'add'):
@@ -599,15 +583,9 @@ class MastodonBot:
                 )
                 return
             
-            # 유저명을 알파벳 단일 문자로 변환
-            sender_sheet = username[0].upper() if username else 'A'
-            recipient_sheet = recipient_mention[0].upper() if recipient_mention else 'A'
-            
-            valid_users = [chr(ord('A') + i) for i in range(20)]
-            if sender_sheet not in valid_users:
-                sender_sheet = 'A'
-            if recipient_sheet not in valid_users:
-                recipient_sheet = 'A'
+            # 유저명을 그대로 사용
+            sender_sheet = username if username else 'Unknown'
+            recipient_sheet = recipient_mention if recipient_mention else 'Unknown'
             
             # 본인에게 양도 금지
             if sender_sheet == recipient_sheet:
@@ -683,9 +661,8 @@ class MastodonBot:
             )
             
             # 유저 소지품 시트에도 직접 추가
-            sheet_username = username[0].upper() if username else 'A'
-            valid_users = [chr(ord('A') + i) for i in range(20)]
-            if sheet_username in valid_users:
+            sheet_username = username if username else 'Unknown'
+            if sheet_username:
                 self.google_sheets.add_item_to_user_inventory(sheet_username, item)
             
         except Exception as e:

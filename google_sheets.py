@@ -275,9 +275,6 @@ class GoogleSheetsManager:
                 print("동기화할 획득 로그가 없습니다.")
                 return
             
-            # 임시 유저 목록 (A~T, 20명)
-            valid_users = [chr(ord('A') + i) for i in range(20)]  # A, B, C, ..., T
-            
             sync_count = 0
             for row in values[1:]:  # 헤더 제외
                 if len(row) >= 3:
@@ -285,8 +282,8 @@ class GoogleSheetsManager:
                     username = row[1]
                     item = row[2]
                     
-                    # 유효한 유저인지 확인 (알파벳 단일 문자)
-                    if username in valid_users:
+                    # 유효한 유저명인지 확인 (빈 문자열이 아닌 경우)
+                    if username and username.strip():
                         if self.add_item_to_user_inventory(username, item, timestamp):
                             sync_count += 1
             
