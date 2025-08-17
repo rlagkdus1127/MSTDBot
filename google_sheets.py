@@ -438,3 +438,104 @@ class GoogleSheetsManager:
         except Exception as e:
             print(f"{username} 아이템 구매 중 오류 발생: {e}")
             return False, "구매 처리 중 오류가 발생했습니다."
+    
+    def remove_item_from_inventory(self, username, item_name, quantity=1):
+        """유저 소지품에서 아이템 제거/차감"""
+        try:
+            sheet = self.service.spreadsheets()
+            
+            # 기존 아이템 확인
+            result = sheet.values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f'{username}!A:C'
+            ).execute()
+            
+            values = result.get('values', [])
+            
+            # 아이템 찾기
+            for i, row in enumerate(values[1:], start=2):  # 헤더 제외
+                if len(row) > 0 and row[0] == item_name:
+                    current_quantity = int(row[2]) if len(row) > 2 and row[2].isdigit() else 1
+                    
+                    if current_quantity < quantity:
+                        return False, f"{item_name}이(가) 부족합니다. (보유: {current_quantity}, 필요: {quantity})"
+                    
+                    new_quantity = current_quantity - quantity
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    if new_quantity <= 0:
+                        # 아이템 완전 제거
+                        delete_request = {
+                            'requests': [{
+                                'deleteDimension': {
+                                    'range': {
+                                        'sheetId': self._get_sheet_id(username),
+                                        'dimension': 'ROWS',
+                                        'startIndex': i - 1,
+                                        'endIndex': i
+                                    }
+                                }
+                            }]
+                        }
+                        
+                        sheet.batchUpdate(
+                            spreadsheetId=self.spreadsheet_id,
+                            body=delete_request
+                        ).execute()
+                    else:
+                        # 수량만 업데이트
+                        update_values = [[item_name, timestamp, new_quantity]]
+                        body = {'values': update_values}
+                        
+                        sheet.values().update(
+                            spreadsheetId=self.spreadsheet_id,
+                            range=f'{username}!A{i}:C{i}',
+                            valueInputOption='RAW',
+                            body=body
+                        ).execute()
+                    
+                    print(f"{username}에서 {item_name} {quantity}개 제거 완료")
+                    return True, f"{item_name} {quantity}개를 제거했습니다."
+            
+            return False, f"{item_name}을(를) 소지품에서 찾을 수 없습니다."
+            
+        except Exception as e:
+            print(f"{username} 아이템 제거 중 오류 발생: {e}")
+            return False, "아이템 제거 중 오류가 발생했습니다."
+    
+    def _get_sheet_id(self, sheet_name):
+        """시트 이름으로 시트 ID 가져오기"""
+        try:
+            spreadsheet = self.service.spreadsheets().get(
+                spreadsheetId=self.spreadsheet_id
+            ).execute()
+            
+            for sheet in spreadsheet['sheets']:
+                if sheet['properties']['title'] == sheet_name:
+                    return sheet['properties']['sheetId']
+            
+            return None
+        except Exception as e:
+            print(f"시트 ID 조회 중 오류: {e}")
+            return None
+    
+    def transfer_item(self, from_user, to_user, item_name, quantity=1):
+        """유저간 아이템 양도"""
+        try:
+            # 보내는 사람의 아이템 확인 및 제거
+            success, message = self.remove_item_from_inventory(from_user, item_name, quantity)
+            if not success:
+                return False, message
+            
+            # 받는 사람에게 아이템 추가
+            if not self.add_item_to_user_inventory(to_user, item_name, quantity=quantity):
+                # 실패시 롤백 - 보내는 사람에게 다시 추가
+                self.add_item_to_user_inventory(from_user, item_name, quantity=quantity)
+                return False, "받는 사람에게 아이템 추가 중 오류가 발생했습니다."
+            
+            print(f"아이템 양도 완료: {from_user} -> {to_user}, {item_name} x{quantity}")
+            return True, f"{item_name} {quantity}개를 {to_user}에게 양도했습니다."
+            
+        except Exception as e:
+            print(f"아이템 양도 중 오류 발생: {e}")
+            return False, "아이템 양도 중 오류가 발생했습니다."

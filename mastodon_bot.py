@@ -125,6 +125,11 @@ class MastodonBot:
                 self.handle_attendance(user, status_id)
                 return
             
+            # 양도 키워드 확인
+            if keywords_text.lower().startswith('양도'):
+                self.handle_transfer(user, status_id, keywords_text, clean_content)
+                return
+            
             # 구글 시트에서 키워드 데이터 가져오기
             keywords_data = self.google_sheets.get_keywords_data(self.keywords_sheet)
             
@@ -499,6 +504,150 @@ class MastodonBot:
         except Exception as e:
             print(f"출석 체크 처리 중 오류 발생: {e}")
             reply = f"@{username} 출석 체크 처리 중 오류가 발생했습니다. 다시 시도해주세요."
+            try:
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+            except:
+                pass
+
+    def handle_transfer(self, username, status_id, keywords_text, original_content):
+        """아이템 양도 처리"""
+        try:
+            import re
+            
+            # 양도 명령어 파싱: 양도 @받는사람 아이템명 수량
+            parts = keywords_text.split()
+            if len(parts) < 3:
+                reply = f"@{username} 사용법: 양도 @받는사람 아이템명 [수량]"
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 멘션에서 받는 사람 추출
+            recipient_mention = None
+            for part in parts[1:]:
+                if part.startswith('@'):
+                    recipient_mention = part[1:]  # @ 제거
+                    break
+            
+            if not recipient_mention:
+                reply = f"@{username} 받는 사람을 @멘션으로 지정해주세요."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 아이템명과 수량 추출
+            # 원본 컨텐츠에서 멘션 제거하고 파싱
+            clean_text = re.sub(r'@\w+', '', original_content)
+            clean_text = re.sub(r'<[^>]+>', '', clean_text).strip()
+            
+            # 양도 부분 제거
+            transfer_part = clean_text.split('양도', 1)
+            if len(transfer_part) > 1:
+                item_part = transfer_part[1].strip()
+            else:
+                item_part = ""
+            
+            if not item_part:
+                reply = f"@{username} 양도할 아이템명을 입력해주세요."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 수량 추출 (마지막 숫자가 수량)
+            item_tokens = item_part.split()
+            quantity = 1
+            item_name = ""
+            
+            if len(item_tokens) > 0:
+                # 마지막 토큰이 숫자인지 확인
+                if item_tokens[-1].isdigit():
+                    quantity = int(item_tokens[-1])
+                    item_name = " ".join(item_tokens[:-1])
+                else:
+                    item_name = " ".join(item_tokens)
+                    quantity = 1
+            
+            if not item_name:
+                reply = f"@{username} 양도할 아이템명을 정확히 입력해주세요."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 유저명을 알파벳 단일 문자로 변환
+            sender_sheet = username[0].upper() if username else 'A'
+            recipient_sheet = recipient_mention[0].upper() if recipient_mention else 'A'
+            
+            valid_users = [chr(ord('A') + i) for i in range(20)]
+            if sender_sheet not in valid_users:
+                sender_sheet = 'A'
+            if recipient_sheet not in valid_users:
+                recipient_sheet = 'A'
+            
+            # 본인에게 양도 금지
+            if sender_sheet == recipient_sheet:
+                reply = f"@{username} 본인에게는 아이템을 양도할 수 없습니다."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 갈레온 양도 금지
+            if item_name.lower() == '갈레온':
+                reply = f"@{username} 갈레온은 양도할 수 없습니다."
+                self.mastodon.status_post(
+                    reply, 
+                    in_reply_to_id=status_id,
+                    visibility='public'
+                )
+                return
+            
+            # 양도 실행
+            success, message = self.google_sheets.transfer_item(
+                sender_sheet, 
+                recipient_sheet, 
+                item_name, 
+                quantity
+            )
+            
+            if success:
+                reply = f"@{username} ✅ {message}"
+                
+                # 양도 로그 기록
+                transfer_log = f"{item_name} x{quantity} 양도 ({username} → {recipient_mention})"
+                self.log_acquisition(username, transfer_log)
+                
+                print(f"아이템 양도 성공 - {username} → {recipient_mention}: {item_name} x{quantity}")
+            else:
+                reply = f"@{username} ❌ {message}"
+            
+            # 응답 전송
+            self.mastodon.status_post(
+                reply, 
+                in_reply_to_id=status_id,
+                visibility='public'
+            )
+            
+        except Exception as e:
+            print(f"아이템 양도 처리 중 오류 발생: {e}")
+            reply = f"@{username} 아이템 양도 처리 중 오류가 발생했습니다. 다시 시도해주세요."
             try:
                 self.mastodon.status_post(
                     reply, 
