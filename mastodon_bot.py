@@ -518,23 +518,33 @@ class MastodonBot:
         try:
             import re
             
-            # 양도 명령어 파싱: 양도 @받는사람 아이템명 수량
-            parts = keywords_text.split()
-            if len(parts) < 3:
-                reply = f"@{username} 사용법: 양도 @받는사람 아이템명 [수량]"
-                self.mastodon.status_post(
-                    reply, 
-                    in_reply_to_id=status_id,
-                    visibility='public'
-                )
-                return
+            # 디버깅용 로그 추가
+            print(f"양도 디버그 - keywords_text: '{keywords_text}'")
+            print(f"양도 디버그 - original_content: '{original_content}'")
             
-            # 멘션에서 받는 사람 추출
+            # 원본 컨텐츠에서 멘션 찾기 (더 robust한 방법)
             recipient_mention = None
-            for part in parts[1:]:
-                if part.startswith('@'):
-                    recipient_mention = part[1:]  # @ 제거
+            
+            # 방법 1: 원본 컨텐츠에서 @로 시작하는 사용자명 찾기
+            mention_pattern = r'@(\w+)'
+            mentions = re.findall(mention_pattern, original_content)
+            
+            # 봇 자신의 멘션 제외하고 첫 번째 멘션을 받는 사람으로 설정
+            bot_name = self.mastodon.me()['username'] if hasattr(self, 'mastodon') else 'MagicBook'
+            for mention in mentions:
+                if mention.lower() != bot_name.lower():
+                    recipient_mention = mention
                     break
+            
+            # 방법 2: keywords_text에서도 시도
+            if not recipient_mention:
+                parts = keywords_text.split()
+                for part in parts[1:]:
+                    if part.startswith('@'):
+                        recipient_mention = part[1:]  # @ 제거
+                        break
+            
+            print(f"양도 디버그 - 찾은 recipient_mention: '{recipient_mention}'")
             
             if not recipient_mention:
                 reply = f"@{username} 받는 사람을 @멘션으로 지정해주세요."
